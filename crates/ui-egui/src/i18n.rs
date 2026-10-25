@@ -17,9 +17,9 @@
 //! a font already installed on the system ([`system_japanese_font`]); with neither, switching to
 //! Japanese is refused with a message.
 //!
-//! Simplified Chinese uses the Chinese fallback `theme::install` always adds (craft-fonts Hans/Hant
-//! faces, otherwise one installed system face, see `cjk.rs`); without one, switching to Chinese is
-//! refused the same way ([`chinese_font_available`]).
+//! Simplified Chinese uses the Chinese fallback of `cjk.rs` (craft-fonts Hans/Hant faces, otherwise
+//! one installed system face, read the first time Chinese is painted); without one, switching to
+//! Chinese is refused the same way ([`chinese_font_available`]).
 
 mod catalog;
 
@@ -289,7 +289,7 @@ const PREFERRED_JAPANESE: &[&str] = &[
     "VL Gothic",
 ];
 
-const JAPANESE_FONT: &str = "system-japanese";
+pub(crate) const JAPANESE_FONT: &str = "system-japanese";
 
 /// A Japanese font already installed on this system, for the interface (none is bundled). Looked up
 /// once per process: the system font folders are scanned on first use (name tables only), then the
@@ -328,16 +328,17 @@ pub fn install_japanese_font(ctx: &egui::Context) -> bool {
     true
 }
 
-/// Whether the interface can show Simplified Chinese: `theme::install` always adds a Chinese
-/// fallback face when there is one (craft-fonts Hans/Hant faces, otherwise an installed system
-/// face, see `cjk.rs`), so nothing needs installing here. False on systems without either.
+/// Whether the interface can show Simplified Chinese: there is a Chinese fallback face (craft-fonts
+/// Hans/Hant faces, which `theme::install` adds, otherwise an installed system face, read the first
+/// time Chinese is painted; see `cjk.rs`), so nothing needs installing here. False on systems
+/// without either.
 pub fn chinese_font_available() -> bool {
     crate::cjk::available()
 }
 
-/// Whether the interface can show Korean: `theme::install` adds an installed system Hangul face
-/// (Malgun Gothic, Apple SD Gothic Neo, Noto Sans CJK KR…, see `cjk.rs`) when there is one; none
-/// is bundled. False on systems (and the web) without one.
+/// Whether the interface can show Korean: there is an installed system Hangul face (Malgun Gothic,
+/// Apple SD Gothic Neo, Noto Sans CJK KR…, see `cjk.rs`), read the first time Hangul is painted;
+/// none is bundled. False on systems (and the web) without one.
 pub fn korean_font_available() -> bool {
     crate::cjk::korean_available()
 }

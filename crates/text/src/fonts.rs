@@ -48,6 +48,11 @@ pub const CRAFT_ORIGIN: &str = "craft-fonts";
 /// The default family for new text.
 pub const DEFAULT_FAMILY: &str = "Inter";
 
+/// Whether the font at `index` of `data` maps `c` to a glyph (false when it can't be parsed).
+pub fn maps_char(data: &[u8], index: u32, c: char) -> bool {
+    FontRef::from_index(data, index).ok().and_then(|f| f.charmap().map(c)).is_some_and(|g| g.to_u32() != 0)
+}
+
 /// Index of a face in the database.
 pub type FaceId = usize;
 
@@ -256,6 +261,28 @@ impl Face {
     }
     pub fn has_char(&self, c: char) -> bool {
         self.glyph(c).is_some()
+    }
+    /// The code points the face maps to a glyph, as sorted, merged inclusive ranges. Like
+    /// [`Face::covers_text`], a face whose file is not loaded yet is read into a temporary buffer
+    /// that is dropped afterwards.
+    pub fn coverage(&self) -> Vec<(u32, u32)> {
+        fn ranges(font: &FontRef<'_>) -> Vec<(u32, u32)> {
+            let mut cps: Vec<u32> = font.charmap().mappings().filter(|(_, g)| g.to_u32() != 0).map(|(cp, _)| cp).collect();
+            cps.sort_unstable();
+            let mut out: Vec<(u32, u32)> = Vec::new();
+            for cp in cps {
+                match out.last_mut() {
+                    Some(last) if cp <= last.1.saturating_add(1) => last.1 = last.1.max(cp),
+                    _ => out.push((cp, cp)),
+                }
+            }
+            out
+        }
+        if let (FaceData::File(p), None) = (&self.info.data, self.bytes.get()) {
+            let Ok(data) = std::fs::read(p) else { return Vec::new() };
+            return FontRef::from_index(&data, self.info.index).map(|f| ranges(&f)).unwrap_or_default();
+        }
+        self.font().map(|f| ranges(&f)).unwrap_or_default()
     }
     /// Whether the face covers every character of `text`. Unlike [`Face::has_char`], a face whose
     /// file is not loaded yet is read into a temporary buffer that is dropped afterwards, so
@@ -651,6 +678,10 @@ mod tests {
         let f = Face { id: 0, info, bytes: OnceLock::new(), shaper: OnceLock::new() };
         assert!(f.covers_text("A\u{416}"));
         assert!(!f.covers_text("A\u{5d0}"));
+        let ranges = f.coverage();
+        let has = |c: char| ranges.iter().any(|&(a, b)| (a..=b).contains(&u32::from(c)));
+        assert!(has('A') && has('\u{416}') && !has('\u{5d0}'), "{ranges:?}");
+        assert!(ranges.windows(2).all(|w| w[0].1.saturating_add(1) < w[1].0), "sorted and merged: {ranges:?}");
         assert!(f.bytes.get().is_none(), "probing coverage must not cache the file");
         assert!(f.data().is_some());
         assert!(f.bytes.get().is_some());
