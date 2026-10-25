@@ -55,9 +55,10 @@ pub(crate) fn craft_fonts() -> impl Iterator<Item = &'static CraftFont> {
 }
 
 /// Installed faces for the scripts craft-fonts does not cover, looked up once per process (native
-/// builds only). A face that covers several scripts (Segoe UI) is added once.
-fn system_fonts() -> &'static [(String, Arc<FontData>)] {
-    static FONTS: OnceLock<Vec<(String, Arc<FontData>)>> = OnceLock::new();
+/// builds only). A face that covers several scripts (Segoe UI) is added once. The faces stay in the
+/// font database, whose bytes egui shares ([`crate::fallback_fonts`]).
+fn system_fonts() -> &'static [(String, Arc<Face>)] {
+    static FONTS: OnceLock<Vec<(String, Arc<Face>)>> = OnceLock::new();
     FONTS.get_or_init(|| {
         if cfg!(target_arch = "wasm32") {
             return Vec::new();
@@ -69,10 +70,9 @@ fn system_fonts() -> &'static [(String, Arc<FontData>)] {
         filmcraft_text::fonts::scan_system();
         let faces: Vec<_> = filmcraft_text::fonts::all_faces().into_iter().filter(|f| f.info.origin == "system" && !f.info.italic).collect();
         let by_weight = |f: &&Arc<Face>| f.info.weight.abs_diff(400);
-        let mut chosen: Vec<&Arc<Face>> = Vec::new();
-        let mut out = Vec::new();
+        let mut out: Vec<(String, Arc<Face>)> = Vec::new();
         for s in missing {
-            if chosen.iter().any(|f| f.covers_text(s.sample)) {
+            if out.iter().any(|(_, f)| f.covers_text(s.sample)) {
                 continue;
             }
             let covers = |f: &&Arc<Face>| f.covers_text(s.sample);
@@ -81,12 +81,10 @@ fn system_fonts() -> &'static [(String, Arc<FontData>)] {
             let Some(face) = preferred.or_else(|| faces.iter().filter(covers).min_by_key(by_weight)) else {
                 continue;
             };
-            let Some(data) = face.data() else {
+            if face.shared_bytes().is_none() {
                 continue;
-            };
-            let font = FontData::from_blob(Arc::new(data), face.info.index);
-            out.push((format!("system-{}", s.code.to_lowercase()), Arc::new(font)));
-            chosen.push(face);
+            }
+            out.push((format!("system-{}", s.code.to_lowercase()), face.clone()));
         }
         out
     })
@@ -104,8 +102,9 @@ pub(crate) fn install(fonts: &mut FontDefinitions) {
         fonts.font_data.insert(name.clone(), Arc::new(FontData::from_static(f.bytes)));
         names.push(name);
     }
-    for (name, font) in system_fonts() {
-        fonts.font_data.insert(name.clone(), font.clone());
+    for (name, face) in system_fonts() {
+        let Some(font) = crate::fallback_fonts::shared(face) else { continue };
+        fonts.font_data.insert(name.clone(), font);
         names.push(name.clone());
     }
     for stack in fonts.families.values_mut() {

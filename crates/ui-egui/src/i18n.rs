@@ -293,24 +293,11 @@ const JAPANESE_FONT: &str = "system-japanese";
 
 /// A Japanese font already installed on this system, for the interface (none is bundled). Looked up
 /// once per process: the system font folders are scanned on first use (name tables only), then the
-/// chosen face's file is read. `None` on the web and on systems without a Japanese font.
+/// chosen face's file is read into the font database, whose bytes egui shares (no copy; see
+/// `fallback_fonts`). `None` on the web and on systems without a Japanese font.
 pub fn system_japanese_font() -> Option<Arc<egui::FontData>> {
-    static FONT: OnceLock<Option<Arc<egui::FontData>>> = OnceLock::new();
-    FONT.get_or_init(|| {
-        filmcraft_text::fonts::scan_system();
-        let faces: Vec<_> = filmcraft_text::fonts::all_faces().into_iter().filter(|f| f.info.origin == "system" && !f.info.italic).collect();
-        let covers = |f: &filmcraft_text::fonts::Face| f.covers_text(JAPANESE_SAMPLE);
-        // within a family, the face closest to regular weight
-        let by_weight = |f: &&Arc<filmcraft_text::fonts::Face>| f.info.weight.abs_diff(400);
-        let preferred =
-            PREFERRED_JAPANESE.iter().find_map(|name| faces.iter().filter(|f| f.info.family.eq_ignore_ascii_case(name) && covers(f)).min_by_key(by_weight));
-        let face = preferred.or_else(|| faces.iter().filter(|f| covers(f)).min_by_key(by_weight))?;
-        // kept for the life of the process (one font, read once) so installing it again after a
-        // theme change shares the bytes instead of copying the whole file
-        let bytes: &'static [u8] = Box::leak(face.data()?.into_boxed_slice());
-        Some(Arc::new(egui::FontData::from_blob(Arc::new(bytes), face.info.index)))
-    })
-    .clone()
+    static FONT: crate::fallback_fonts::SystemFace = crate::fallback_fonts::SystemFace::new(JAPANESE_SAMPLE, PREFERRED_JAPANESE);
+    FONT.font_data()
 }
 
 /// Whether the craft-fonts build input (empty unless built with `CRAFT_FONTS_DIR`) supplies a

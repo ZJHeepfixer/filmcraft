@@ -224,6 +224,17 @@ impl Face {
             .as_ref()
             .map(FaceBytes::get)
     }
+    /// The font file's bytes, shared rather than copied: the bytes the database read and keeps
+    /// with the face (or the static data), as one more reference to them. Read on first use; None
+    /// if the file is missing or unreadable. Prefer this to [`Face::data`] to hand a face to a
+    /// consumer that keeps it (egui's `FontData::from_blob`).
+    pub fn shared_bytes(&self) -> Option<Arc<dyn AsRef<[u8]> + Send + Sync>> {
+        self.bytes()?;
+        match self.bytes.get()?.as_ref()? {
+            FaceBytes::Static(b) => Some(Arc::new(*b)),
+            FaceBytes::Shared(b) => Some(b.clone()),
+        }
+    }
     /// A copy of the font file's bytes (None if it is missing or unreadable).
     pub fn data(&self) -> Option<Vec<u8>> {
         self.bytes().map(<[u8]>::to_vec)
@@ -644,5 +655,33 @@ mod tests {
         assert!(f.data().is_some());
         assert!(f.bytes.get().is_some());
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// `shared_bytes` reads the file once and then hands out the bytes the face keeps (no copy),
+    /// even after the file is gone: a caller can share them for as long as it holds them.
+    #[test]
+    fn shared_bytes_are_read_once_and_not_copied() {
+        let path = std::env::temp_dir().join(format!("filmcraft-face-bytes-{}.ttf", std::process::id()));
+        std::fs::write(&path, INTER_REGULAR).expect("write temp font");
+        let info = FaceInfo {
+            family: "Inter".into(),
+            style: "Regular".into(),
+            weight: 400,
+            italic: false,
+            index: 0,
+            data: FaceData::File(path.clone()),
+            origin: "system",
+        };
+        let f = Face { id: 0, info, bytes: OnceLock::new(), shaper: OnceLock::new() };
+        let first = f.shared_bytes().expect("readable font");
+        let _ = std::fs::remove_file(&path);
+        let second = f.shared_bytes().expect("kept bytes");
+        let kept = f.bytes().map(<[u8]>::as_ptr);
+        assert_eq!(Some((*first).as_ref().as_ptr()), kept, "the face's own bytes, not a copy");
+        assert_eq!(Some((*second).as_ref().as_ptr()), kept, "the same bytes, not a second read or a copy");
+        assert_eq!((*second).as_ref().len(), INTER_REGULAR.len());
+        assert!(f.has_char('A'), "the kept bytes serve the face after its file is gone");
+        let bundled = face(0).shared_bytes().expect("bundled face");
+        assert_eq!((*bundled).as_ref().as_ptr(), INTER_REGULAR.as_ptr(), "static data is shared, not copied");
     }
 }
